@@ -62,3 +62,6 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 
 Info.plist
+
+# Spec-driven workflow session files (ephemeral)
+spec-driven/.sessions/
