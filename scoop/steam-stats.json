@@ -1,0 +1,15 @@
+{
+  "version": "PLACEHOLDER_UPDATED_BY_CI",
+  "description": "Terminal UI for viewing your personal Steam stats",
+  "homepage": "https://github.com/ericwiley/SteamStats",
+  "license": "MIT",
+  "url": "PLACEHOLDER_UPDATED_BY_CI",
+  "hash": "PLACEHOLDER_UPDATED_BY_CI",
+  "bin": "steam-stats.exe",
+  "checkver": {
+    "github": "https://github.com/ericwiley/SteamStats"
+  },
+  "autoupdate": {
+    "url": "https://github.com/ericwiley/SteamStats/releases/download/v$version/steam-stats-x86_64-pc-windows-msvc.zip"
+  }
+}
