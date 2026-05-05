@@ -4,77 +4,94 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SteamStats is an iPhone app for viewing personal Steam statistics. Built with Swift for iOS.
+SteamStats is a terminal UI (TUI) app for viewing personal Steam statistics. Built with Rust.
 
 ## Build and Development Commands
 
 ```bash
 # Build the project
-xcodebuild -scheme SteamStats -destination 'platform=iOS Simulator,name=iPhone 15'
+cargo build
+
+# Build in release mode
+cargo build --release
+
+# Run the app
+cargo run
+
+# Run with arguments
+cargo run -- --steam-id <STEAM_ID>
 
 # Run all tests
-xcodebuild test -scheme SteamStats -destination 'platform=iOS Simulator,name=iPhone 15'
+cargo test
 
-# Run a single test class
-xcodebuild test -scheme SteamStats -destination 'platform=iOS Simulator,name=iPhone 15' -only-testing:SteamStatsTests/TestClassName
+# Run a single test module
+cargo test <module_name>
 
-# Run a single test method
-xcodebuild test -scheme SteamStats -destination 'platform=iOS Simulator,name=iPhone 15' -only-testing:SteamStatsTests/TestClassName/testMethodName
+# Run a single test
+cargo test <test_name>
 
-# Lint with SwiftLint (if installed)
-swiftlint
+# Check for compile errors without building
+cargo check
 
-# Format with SwiftFormat (if installed)
-swiftformat .
+# Lint with Clippy
+cargo clippy
+
+# Format code
+cargo fmt
+
+# Format check (CI)
+cargo fmt -- --check
 ```
 
-## Swift Best Practices
+## Rust Best Practices
 
 ### Code Organization
 
-- Use extensions to organize code by protocol conformance
-- Group related functionality in separate files within feature folders
-- Prefer composition over inheritance
-- Use `// MARK: -` comments to organize large files by section
+- Organize code into modules by feature/domain (e.g., `steam/`, `ui/`, `config/`)
+- Use `mod.rs` or module files at the same level for public interfaces
+- Prefer composition over inheritance (use traits and structs)
+- Keep modules focused on a single responsibility
 
-### SwiftUI Conventions
+### TUI Conventions (ratatui)
 
-- Extract reusable views into separate structs
-- Keep views small and focused on presentation
-- Move business logic to ViewModels or dedicated services
-- Use `@StateObject` for owned observable objects, `@ObservedObject` for injected ones
-- Prefer `@Environment` for dependency injection over initializer parameters for shared services
+- Separate app state (`App` struct) from rendering logic
+- Use an event loop with `crossterm` for input handling
+- Keep `draw()` functions pure — pass state in, render out
+- Use `StatefulWidget` for interactive components (lists, tables)
+- Handle terminal cleanup on panic via `color_eyre` or a panic hook
 
-### Concurrency
+### Concurrency (tokio)
 
-- Use Swift's structured concurrency (`async/await`) over completion handlers
-- Mark `@MainActor` for UI-related code
-- Use `Task` for bridging sync to async contexts
-- Handle cancellation appropriately in long-running operations
+- Use `tokio` for async runtime; prefer `async/await` over raw futures
+- Use `tokio::spawn` for background tasks; keep the main thread for rendering
+- Use `tokio::sync::mpsc` channels to communicate between async tasks and the TUI event loop
+- Avoid blocking the async runtime with sync I/O — use `tokio::task::spawn_blocking` when needed
 
 ### Error Handling
 
-- Define custom error types conforming to `Error` for domain-specific failures
-- Use `Result` type when callbacks are necessary
-- Prefer throwing functions over optional returns when failure is meaningful
+- Use `thiserror` for defining domain-specific error types
+- Use `anyhow` for application-level error propagation
+- Prefer `Result<T, E>` over panicking in library/service code
+- Surface errors to the TUI as user-readable messages, not raw debug output
+
+### API Integration (reqwest + serde)
+
+- Use `reqwest` with `async/await` for HTTP requests to the Steam Web API
+- Use `serde` with `#[derive(Deserialize)]` for JSON parsing
+- Define response models in a dedicated `models/` or `steam/` module
+- Handle rate limiting and network errors gracefully with `thiserror`/`anyhow`
 
 ### Naming Conventions
 
-- Types and protocols: UpperCamelCase
-- Properties, methods, variables: lowerCamelCase
-- Use descriptive names; avoid abbreviations except for common ones (URL, ID)
-- Boolean properties: use `is`, `has`, `should` prefixes (e.g., `isLoading`, `hasError`)
-
-### API Integration
-
-- Use `Codable` for JSON parsing
-- Create dedicated service classes for API calls
-- Define models in separate files from networking code
-- Use `URLSession` with async/await for network requests
+- Types, traits, enums: `UpperCamelCase`
+- Functions, methods, variables, modules: `snake_case`
+- Constants: `SCREAMING_SNAKE_CASE`
+- Use descriptive names; avoid abbreviations except for common ones (URL, ID, TUI)
+- Boolean fields/variables: use `is_`, `has_`, `should_` prefixes (e.g., `is_loading`, `has_error`)
 
 ### Testing
 
-- Name tests descriptively: `test_methodName_condition_expectedResult`
-- Use `XCTest` for unit tests
-- Mock network calls and external dependencies
-- Test ViewModels independently from views
+- Name tests descriptively: `test_function_name_condition_expected_result`
+- Use `#[cfg(test)]` modules in the same file for unit tests
+- Mock HTTP calls with `mockito` or `wiremock` for integration tests
+- Test business logic (state transitions, data transforms) independently from TUI rendering
