@@ -1,138 +1,135 @@
-# SteamStats
+# steam-stats
 
-An iOS app for viewing personal Steam statistics with customizable date ranges, inspired by Steam Replay and Stats.fm.
+A terminal UI (TUI) for viewing your personal Steam statistics — top games, playtime, session counts, and more — right in your terminal.
 
-## Features
+```
+┌─ steam-stats ─────────────────────────────────────────────────────────────┐
+│ Player: YourSteamName              Games owned: 312   Total playtime: 2847h│
+├───────────────────────────────────────────────────────────────────────────┤
+│ # Game                              Playtime   Est. Sessions  Last played  │
+│ 1 Counter-Strike 2                  843h       2,109          3 days ago   │
+│ 2 Elden Ring                        214h       428            2 weeks ago  │
+│ 3 Hollow Knight                      98h       196            1 month ago  │
+└───────────────────────────────────────────────────────────────────────────┘
+  [q] Quit  [r] Refresh  [↑↓] Scroll  [Tab] Switch view
+```
 
-- View gaming stats across multiple time ranges (today, this week, 6 months, lifetime)
-- See top games with playtime percentages
-- Track total hours, games played, and achievements
-- Beautiful card-based UI inspired by Steam Replay
-- Real-time data from Steam Web API
+## Install
 
-## Requirements
+### macOS / Linux (curl | sh)
 
-- iOS 17.0+
-- Xcode 15.0+
-- Steam API Key (get one at https://steamcommunity.com/dev/apikey)
-- Your Steam ID (find it in your Steam profile URL)
+```sh
+curl -fsSL https://raw.githubusercontent.com/ericwiley/SteamStats/main/install.sh | sh
+```
 
-## Setup
+This detects your architecture (Apple Silicon or Intel) and installs the correct binary to `/usr/local/bin/steam-stats`.
 
-### 1. Get Your Steam API Key
+### Windows (Scoop)
+
+```powershell
+scoop bucket add steam-stats https://github.com/ericwiley/SteamStats
+scoop install steam-stats
+```
+
+## Quick Start
+
+On first run, `steam-stats` will prompt you to create a config file:
+
+```sh
+steam-stats
+# → No config found at ~/.config/steam-stats/config.toml
+# → Creating config template...
+# → Edit ~/.config/steam-stats/config.toml and re-run.
+```
+
+Edit `~/.config/steam-stats/config.toml` (Windows: `%APPDATA%\steam-stats\config.toml`):
+
+```toml
+steam_api_key = "YOUR_STEAM_API_KEY_HERE"
+steam_id = "76561198000000000"
+```
+
+Then run `steam-stats` again.
+
+## Configuration
+
+### Getting a Steam API Key
 
 1. Visit https://steamcommunity.com/dev/apikey
 2. Register for a Steam Web API Key
-3. Copy your API key
+3. Copy the key into `config.toml` under `steam_api_key`
 
-### 2. Find Your Steam ID
+**Important:** Store your API key only in `~/.config/steam-stats/config.toml`. Do not set it as an environment variable or hardcode it in any script.
 
-Your Steam ID is the long number in your profile URL:
-- Profile URL: `https://steamcommunity.com/profiles/76561198000000000`
-- Steam ID: `76561198000000000`
+### Finding Your Steam ID
 
-Alternatively, use a service like https://steamid.io/ to convert your custom URL.
-
-### 3. Open the Project in Xcode
-
-You have two options:
-
-**Option A: Use Xcode Directly**
-1. Open Xcode
-2. File → New → Project
-3. Choose "iOS" → "App"
-4. Name it "SteamStats" with organization identifier "com.steamstats"
-5. Choose SwiftUI interface and Swift language
-6. Replace the generated files with the files from this repository
-
-**Option B: Use XcodeGen (if installed)**
-```bash
-# Install XcodeGen if not already installed
-brew install xcodegen
-
-# Generate the Xcode project
-xcodegen generate
-
-# Open the project
-open SteamStats.xcodeproj
-```
-
-### 4. Configure Your API Key
-
-The API key is already configured in `Info.plist`, but you can change it:
-
-1. Open `SteamStats/Info.plist`
-2. Find the `STEAM_API_KEY` entry
-3. Replace with your API key
-
-### 5. Enter Your Steam ID
-
-When you first launch the app, you'll be prompted to enter your Steam ID.
-
-## Building and Running
-
-### Using Xcode
-1. Select a simulator or device
-2. Press Cmd+R to build and run
-
-### Using Command Line
-```bash
-# Build
-xcodebuild -scheme SteamStats -destination 'platform=iOS Simulator,name=iPhone 15'
-
-# Run tests
-xcodebuild test -scheme SteamStats -destination 'platform=iOS Simulator,name=iPhone 15'
-```
-
-## Project Structure
+Your Steam ID is the 17-digit number in your profile URL:
 
 ```
-SteamStats/
-├── App/
-│   └── SteamStatsApp.swift           # App entry point
-├── Features/
-│   └── Stats/
-│       ├── Views/
-│       │   └── StatsView.swift       # Main stats screen
-│       ├── ViewModels/
-│       │   └── StatsViewModel.swift  # Stats business logic
-│       └── Models/
-│           └── StatsModels.swift     # Stats data models
-├── Core/
-│   ├── Network/
-│   │   └── SteamAPIClient.swift      # API client
-│   └── Models/
-│       └── SteamModels.swift         # Steam API models
-└── Resources/
-    └── Assets.xcassets               # App assets
+https://steamcommunity.com/profiles/76561198000000000
+                                     ↑ this is your Steam ID
 ```
 
-## Steam API Endpoints Used
+If you use a custom URL, use https://steamid.io/ to convert it to the numeric ID.
 
-- `IPlayerService/GetOwnedGames` - Fetch all owned games with playtime
-- `IPlayerService/GetRecentlyPlayedGames` - Recent activity (last 2 weeks)
-- `ISteamUser/GetPlayerSummaries` - Player profile information
-- `ISteamUserStats/GetPlayerAchievements` - Achievement data per game
+### Config file location
 
-## Privacy Notes
+| Platform | Path |
+|----------|------|
+| macOS / Linux | `~/.config/steam-stats/config.toml` |
+| Windows | `%APPDATA%\steam-stats\config.toml` |
 
-- Your Steam profile must be public for the API to return data
-- The app only reads data; it never modifies your Steam account
-- Your API key and Steam ID are stored locally on your device
-- No data is sent to any server other than Steam's official API
+## Usage
 
-## Known Limitations
+```
+steam-stats          # Launch the TUI
+steam-stats --help   # Show help
+steam-stats --version
+```
 
-- Steam API doesn't provide exact daily/weekly breakdowns, so some date ranges use approximations
-- The "today" and "this week" ranges show games played in the last 2 weeks (Steam API limitation)
-- Session counts are estimated based on playtime
+### Keyboard shortcuts
 
-## Sources
+| Key | Action |
+|-----|--------|
+| `q` / `Ctrl-C` | Quit |
+| `r` | Refresh data from Steam API |
+| `↑` / `↓` | Scroll game list |
+| `Tab` | Switch between views |
 
-- [Steam Web API Documentation](https://developer.valvesoftware.com/wiki/Steam_Web_API)
-- [Better Steam Web API Documentation](https://steamwebapi.azurewebsites.net/)
-- [IPlayerService Interface](https://partner.steamgames.com/doc/webapi/iplayerservice)
+## Requirements
+
+> **Your Steam profile must be set to Public** for the API to return game data. Check your privacy settings at https://steamcommunity.com/my/edit/settings.
+
+## Limitations
+
+- **Est. Sessions**: Session counts are *estimated* from playtime (roughly 30-minute average sessions). Steam does not expose actual session-level data through its public API. The count in the "Est. Sessions" column is an approximation.
+- **Snapshot history**: Some trend features (e.g., playtime changes over time) require multiple snapshots. Stats improve after the tool has been run on several separate days.
+- **Date range precision**: Steam's public API does not provide per-day playtime breakdowns. Weekly/monthly ranges use the available data (last 2 weeks from `GetRecentlyPlayedGames`) combined with lifetime totals.
+
+## How it works
+
+`steam-stats` fetches data from the Steam Web API on launch, caches a snapshot locally, and renders the TUI. Subsequent launches show the cached data immediately while a background refresh runs.
+
+Cache location: `~/.local/share/steam-stats/` (macOS/Linux) or `%LOCALAPPDATA%\steam-stats\` (Windows).
+
+## Privacy
+
+- Your Steam profile must be **public** to return game data
+- The tool only reads data — it never modifies your Steam account
+- Your API key and Steam ID are stored locally in `config.toml`
+- No data is sent anywhere except Steam's official API
+
+## Building from source
+
+```sh
+git clone https://github.com/ericwiley/SteamStats
+cd SteamStats
+cargo build --release
+./target/release/steam-stats
+```
+
+Requires Rust 1.75+ and an internet connection for dependencies.
 
 ## License
 
-See LICENSE file for details.
+See [LICENSE](LICENSE) for details.
