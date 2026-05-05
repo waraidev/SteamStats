@@ -1,7 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
+use tokio::sync::Mutex;
 
 use crate::models::{OwnedGame, OwnedGamesResponse, RecentGame, RecentlyPlayedResponse};
 
@@ -55,6 +57,8 @@ pub struct SteamClient {
     base_url: String,
     /// AC-3.4: prevents duplicate GetOwnedGames calls in the same process run.
     fetched_owned: AtomicBool,
+    /// AC-3.4: cached result from the first GetOwnedGames call.
+    owned_games: Arc<Mutex<Option<Vec<OwnedGame>>>>,
 }
 
 impl SteamClient {
@@ -80,6 +84,7 @@ impl SteamClient {
             api_key: api_key.into(),
             base_url: base.into().trim_end_matches('/').to_string(),
             fetched_owned: AtomicBool::new(false),
+            owned_games: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -91,6 +96,11 @@ impl SteamClient {
     /// AC-3.4: subsequent calls in the same process run return an error to the caller to
     /// indicate this was already fetched — callers should cache the result.
     pub async fn get_owned_games(&self) -> Result<Vec<OwnedGame>, SteamApiError> {
+        // AC-3.4: return cached result on subsequent calls without firing a new HTTP request.
+        if self.fetched_owned.load(Ordering::SeqCst) {
+            return Ok(self.owned_games.lock().await.clone().unwrap_or_default());
+        }
+
         let url = format!("{}/IPlayerService/GetOwnedGames/v1", self.base_url);
 
         let resp = self
@@ -116,8 +126,10 @@ impl SteamClient {
             .await
             .map_err(|e| SteamApiError::Parse(e.to_string()))?;
 
-        self.fetched_owned.store(true, Ordering::Relaxed);
-        Ok(envelope.response.games)
+        let games = envelope.response.games;
+        *self.owned_games.lock().await = Some(games.clone());
+        self.fetched_owned.store(true, Ordering::SeqCst);
+        Ok(games)
     }
 
     /// `GET /IPlayerService/GetRecentlyPlayedGames/v1`
@@ -404,5 +416,35 @@ mod tests {
         assert!(!client.owned_games_fetched(), "Flag should start false");
         client.get_owned_games().await.expect("should succeed");
         assert!(client.owned_games_fetched(), "Flag should be true after fetch");
+    }
+
+    /// AC-3.4: a second call to get_owned_games must NOT fire a second HTTP request.
+    #[tokio::test]
+    async fn test_get_owned_games_not_refetched_after_first_call() {
+        let server = MockServer::start().await;
+
+        // expect(1) — wiremock will assert exactly one request was received on drop.
+        Mock::given(method("GET"))
+            .and(path_regex("/IPlayerService/GetOwnedGames/v1"))
+            .and(query_param("steamid", "12345"))
+            .and(query_param("key", "test_key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(owned_games_json(
+                serde_json::json!([
+                    {"appid": 570, "name": "Dota 2", "playtime_forever": 100}
+                ]),
+            )))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = SteamClient::with_base_url(server.uri(), "12345", "test_key");
+
+        let first = client.get_owned_games().await.expect("first call should succeed");
+        assert_eq!(first.len(), 1, "First call should return the game");
+
+        let second = client.get_owned_games().await.expect("second call should succeed");
+        assert_eq!(second.len(), 1, "Second call should return cached result");
+
+        // MockServer drops here and verifies exactly 1 request was received.
     }
 }
