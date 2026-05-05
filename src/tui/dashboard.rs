@@ -301,6 +301,7 @@ mod tests {
             }],
             achievement_cache: HashMap::new(),
             tx,
+            force_achievement_refresh: false,
         }
     }
 
@@ -338,6 +339,7 @@ mod tests {
             recent_games: vec![],
             achievement_cache: HashMap::new(),
             tx,
+            force_achievement_refresh: false,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -368,6 +370,7 @@ mod tests {
             recent_games: vec![], // <-- empty
             achievement_cache: HashMap::new(),
             tx,
+            force_achievement_refresh: false,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -397,6 +400,7 @@ mod tests {
             recent_games: vec![],
             achievement_cache: HashMap::new(),
             tx,
+            force_achievement_refresh: false,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -426,6 +430,7 @@ mod tests {
             recent_games: vec![],
             achievement_cache: HashMap::new(),
             tx,
+            force_achievement_refresh: false,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -455,6 +460,7 @@ mod tests {
             recent_games: vec![],
             achievement_cache: HashMap::new(),
             tx,
+            force_achievement_refresh: false,
         };
 
         let buf = render_app(&app, 80, 24);
