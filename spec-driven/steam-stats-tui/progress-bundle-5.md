@@ -15,10 +15,10 @@ Progress: 0/5 steps complete
 
 | Step | Status | Commit | Notes |
 |------|--------|--------|-------|
-| STEP-14 | pending | — | — |
-| STEP-15 | pending | — | — |
-| STEP-16 | pending | — | — |
-| STEP-17 | pending | — | — |
+| STEP-14 | pending | 459801c | — |
+| STEP-15 | pending | 594d76f | — |
+| STEP-16 | pending | ad0520e | — |
+| STEP-17 | pending | c1eb39b | — |
 | STEP-18 | pending | — | — |
 
 ## Session Log
