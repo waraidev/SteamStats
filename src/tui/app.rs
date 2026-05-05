@@ -37,9 +37,12 @@ pub enum AppEvent {
         recent: Vec<RecentGame>,
     },
     /// Achievement data for a batch of games has arrived (may arrive multiple times).
-    AchievementsPartial(HashMap<u32, u64>),
+    /// Value is `Some(count)` for games with achievements, `None` for unavailable/private games.
+    AchievementsPartial(HashMap<u32, Option<u64>>),
     /// A non-fatal or fatal API error occurred.
     ApiError(String),
+    /// A non-fatal background warning to display in the status bar (replaces eprintln! during TUI).
+    StatusMessage(String),
     /// User requested quit.
     Quit,
 }
@@ -63,6 +66,9 @@ pub struct App {
     /// When `true`, the background task should re-fetch all game achievements
     /// on its next cycle (set by the 'r' keybind).
     pub force_achievement_refresh: bool,
+    /// Most recent non-fatal warning from background tasks, shown in the status bar.
+    /// Displayed instead of partial_data_note when set.
+    pub status_message: Option<String>,
 }
 
 impl App {
@@ -95,6 +101,7 @@ impl App {
             achievement_cache: HashMap::new(),
             tx,
             force_achievement_refresh: false,
+            status_message: None,
         }
     }
 }
@@ -109,16 +116,37 @@ pub fn process_events(app: &mut App, rx: &mut UnboundedReceiver<AppEvent>) {
     while let Ok(ev) = rx.try_recv() {
         match ev {
             AppEvent::DataLoaded { owned, recent } => {
-                // Transition Loading → Loaded. Compute lightweight placeholder stats
-                // until the snapshot store (later bundle) provides real deltas.
                 app.stats.games_played = owned.len() as u64;
+
+                // Build top_games from recently played using playtime_2weeks as the delta.
+                // This is the best available breakdown until snapshot-based deltas are ready.
+                let mut games: Vec<GameStats> = recent
+                    .iter()
+                    .filter(|g| g.playtime_2weeks > 0)
+                    .map(|g| GameStats {
+                        appid: g.appid,
+                        name: g.name.clone(),
+                        playtime_delta_minutes: g.playtime_2weeks as u64,
+                        playtime_forever_minutes: g.playtime_forever as u64,
+                        achievement_count: None,
+                        rank: 0,
+                    })
+                    .collect();
+                games.sort_by(|a, b| b.playtime_delta_minutes.cmp(&a.playtime_delta_minutes));
+                for (i, g) in games.iter_mut().enumerate() {
+                    g.rank = i + 1;
+                }
+                app.top_games = games;
                 app.recent_games = recent;
+                // Clear any stale status message from before data loaded.
+                app.status_message = None;
                 app.state = AppState::Loaded;
             }
             AppEvent::AchievementsPartial(batch) => {
                 // Merge partial results — existing entries NOT in this batch are preserved.
-                for (appid, count) in batch {
-                    app.achievement_cache.insert(appid, Some(count));
+                // None entries mark games as "checked, unavailable" to prevent re-fetching.
+                for (appid, count_opt) in batch {
+                    app.achievement_cache.insert(appid, count_opt);
                 }
                 // Recompute stats.achievements as sum of all Some(_) values in the cache.
                 // Remains None until first partial arrives (AC-9.2).
@@ -131,6 +159,9 @@ pub fn process_events(app: &mut App, rx: &mut UnboundedReceiver<AppEvent>) {
             }
             AppEvent::ApiError(msg) => {
                 app.state = AppState::Error(msg);
+            }
+            AppEvent::StatusMessage(msg) => {
+                app.status_message = Some(msg);
             }
             AppEvent::Quit => {
                 // Signal quit by transitioning to an Error state with a sentinel
@@ -333,8 +364,8 @@ mod tests {
         let (mut app, mut rx) = make_app();
 
         let mut batch = HashMap::new();
-        batch.insert(730u32, 42u64);
-        batch.insert(4000u32, 7u64);
+        batch.insert(730u32, Some(42u64));
+        batch.insert(4000u32, Some(7u64));
 
         app.tx
             .send(AppEvent::AchievementsPartial(batch))
@@ -416,8 +447,8 @@ mod tests {
         assert_eq!(app.stats.achievements, None, "starts as None before any partial");
 
         let mut batch = HashMap::new();
-        batch.insert(730u32, 50u64);
-        batch.insert(440u32, 100u64);
+        batch.insert(730u32, Some(50u64));
+        batch.insert(440u32, Some(100u64));
 
         app.tx
             .send(AppEvent::AchievementsPartial(batch))
@@ -450,7 +481,7 @@ mod tests {
 
         // First partial: game 730 gets 50 achievements.
         let mut first = HashMap::new();
-        first.insert(730u32, 50u64);
+        first.insert(730u32, Some(50u64));
         app.tx
             .send(AppEvent::AchievementsPartial(first))
             .unwrap();
@@ -461,7 +492,7 @@ mod tests {
 
         // Second partial: only game 440 — game 730's entry must be preserved.
         let mut second = HashMap::new();
-        second.insert(440u32, 100u64);
+        second.insert(440u32, Some(100u64));
         app.tx
             .send(AppEvent::AchievementsPartial(second))
             .unwrap();
@@ -510,7 +541,7 @@ mod tests {
 
         // Send a partial with real data.
         let mut batch = HashMap::new();
-        batch.insert(730u32, 42u64);
+        batch.insert(730u32, Some(42u64));
         app.tx
             .send(AppEvent::AchievementsPartial(batch))
             .unwrap();

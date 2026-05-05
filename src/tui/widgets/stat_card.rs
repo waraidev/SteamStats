@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
@@ -9,7 +9,10 @@ use ratatui::widgets::{Paragraph, Widget};
 #[allow(unused_imports)]
 pub use crate::models::stats::LABEL_EST_SESSIONS;
 
-/// A stat card showing a numeric value (bold, top half) and a label (bottom half).
+/// A stat card showing a label (dim, top half) then a value (bold cyan, bottom half).
+///
+/// Label-on-top ordering prevents visual confusion with the period bar directly above,
+/// which would otherwise make "4 Weeks → 87" read as a period-specific count.
 ///
 /// Callers must pass `LABEL_EST_SESSIONS` as the label for the sessions stat.
 /// The `value` field is a `String` so callers can pass `"—"` for unavailable data.
@@ -20,17 +23,26 @@ pub struct StatCard<'a> {
 
 impl<'a> Widget for StatCard<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Split vertically: top half for value, bottom half for label
+        // Label on top (dim), value on bottom (bold cyan) — reads as "Games Played: 87"
         let rows = Layout::vertical([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)]).split(area);
+
+        let label_line = Line::from(Span::styled(
+            self.label,
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+        Paragraph::new(label_line)
+            .alignment(Alignment::Center)
+            .render(rows[0], buf);
 
         let value_line = Line::from(Span::styled(
             self.value.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan),
         ));
-        Paragraph::new(value_line).render(rows[0], buf);
-
-        let label_line = Line::from(Span::raw(self.label));
-        Paragraph::new(label_line).render(rows[1], buf);
+        Paragraph::new(value_line)
+            .alignment(Alignment::Center)
+            .render(rows[1], buf);
     }
 }
 

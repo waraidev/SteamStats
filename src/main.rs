@@ -57,8 +57,11 @@ async fn main() -> anyhow::Result<()> {
         let recent = match client.get_recently_played().await {
             Ok(games) => games,
             Err(e) => {
-                // Recently played is non-fatal — send what we have with empty recent list.
-                eprintln!("[warn] get_recently_played failed: {e}");
+                // Recently played is non-fatal — report via channel so the TUI status bar
+                // can show it without writing to stderr (which would corrupt the TUI display).
+                let _ = tx_fetch.send(AppEvent::StatusMessage(
+                    format!("Recently played unavailable: {e}"),
+                ));
                 vec![]
             }
         };
@@ -66,7 +69,9 @@ async fn main() -> anyhow::Result<()> {
         // Persist new snapshot (includes fresh playtime values).
         let snapshot = build_snapshot(&owned);
         if let Err(e) = store.append(&snapshot) {
-            eprintln!("[warn] failed to persist snapshot: {e}");
+            let _ = tx_fetch.send(AppEvent::StatusMessage(
+                format!("Snapshot save failed: {e}"),
+            ));
         }
 
         // Signal UI that base data is ready.
@@ -105,21 +110,23 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
 
-            let mut batch_result: HashMap<u32, u64> = HashMap::new();
+            let mut batch_result: HashMap<u32, Option<u64>> = HashMap::new();
             while let Some(join_result) = join_set.join_next().await {
                 match join_result {
                     Ok((appid, Ok(count))) => {
-                        batch_result.insert(appid, count as u64);
+                        batch_result.insert(appid, Some(count as u64));
                     }
                     Ok((appid, Err(SteamApiError::NotAvailable))) => {
-                        // 403/400 = private stats or no achievements — non-fatal, skip.
-                        eprintln!("[info] achievements not available for appid {appid}");
+                        // 403/400 = private stats or no achievements — mark as None so we
+                        // don't re-fetch this game on the next run.
+                        batch_result.insert(appid, None);
                     }
-                    Ok((appid, Err(e))) => {
-                        eprintln!("[warn] achievement fetch failed for appid {appid}: {e}");
+                    Ok((_appid, Err(_e))) => {
+                        // Transient error (502, timeout, etc.) — skip silently.
+                        // Not cached, so this game will be retried on the next run.
                     }
-                    Err(e) => {
-                        eprintln!("[warn] achievement task panicked: {e}");
+                    Err(_e) => {
+                        // Task panicked — skip this game, continue with the batch.
                     }
                 }
             }

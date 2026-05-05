@@ -35,9 +35,14 @@ struct PlayerAchievementsResponse {
 
 #[derive(Debug, Deserialize)]
 struct PlayerStats {
+    /// false when the game has no achievement schema — treat as NotAvailable.
+    #[serde(default = "default_true")]
+    success: bool,
     #[serde(default)]
     achievements: Vec<Achievement>,
 }
+
+fn default_true() -> bool { true }
 
 #[derive(Debug, Deserialize)]
 struct Achievement {
@@ -186,7 +191,14 @@ impl SteamClient {
             .await?;
 
         let status = resp.status();
-        if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::BAD_REQUEST {
+        // 400/403 = private stats; 500 = no achievement schema on Steam's side.
+        // All three mean "not available for this game" — non-fatal, cache as None.
+        if matches!(
+            status,
+            reqwest::StatusCode::FORBIDDEN
+                | reqwest::StatusCode::BAD_REQUEST
+                | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ) {
             return Err(SteamApiError::NotAvailable);
         }
         if !status.is_success() {
@@ -198,6 +210,11 @@ impl SteamClient {
             .json()
             .await
             .map_err(|e| SteamApiError::Parse(e.to_string()))?;
+
+        // Steam occasionally returns 200 with success:false when there's no schema.
+        if !envelope.playerstats.success {
+            return Err(SteamApiError::NotAvailable);
+        }
 
         let unlocked = envelope
             .playerstats
@@ -371,6 +388,57 @@ mod tests {
         let result = client.get_player_achievements(12345).await;
 
         assert!(matches!(result, Err(SteamApiError::NotAvailable)));
+    }
+
+    #[tokio::test]
+    async fn test_get_player_achievements_500_returns_not_available() {
+        let server = MockServer::start().await;
+
+        // Steam returns 500 with this body for games with no achievement schema.
+        Mock::given(method("GET"))
+            .and(path_regex("/ISteamUserStats/GetPlayerAchievements/v1"))
+            .and(query_param("appid", "32370"))
+            .respond_with(
+                ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                    "playerstats": {"error": "Internal server error", "success": false}
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let client =
+            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let result = client.get_player_achievements(32370).await;
+
+        assert!(
+            matches!(result, Err(SteamApiError::NotAvailable)),
+            "HTTP 500 with no-schema body should map to NotAvailable, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_player_achievements_200_success_false_returns_not_available() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path_regex("/ISteamUserStats/GetPlayerAchievements/v1"))
+            .and(query_param("appid", "99999"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "playerstats": {"success": false}
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let client =
+            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let result = client.get_player_achievements(99999).await;
+
+        assert!(
+            matches!(result, Err(SteamApiError::NotAvailable)),
+            "200 with success:false should map to NotAvailable, got: {result:?}"
+        );
     }
 
     #[tokio::test]

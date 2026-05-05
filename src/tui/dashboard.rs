@@ -56,11 +56,11 @@ pub fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     ]);
     f.render_widget(Paragraph::new(hint), hint_bar_area);
 
-    // Status bar — show partial_data_note or empty
+    // Status bar — prefer status_message (background errors) over partial_data_note
     let status_text = app
-        .stats
-        .partial_data_note
+        .status_message
         .as_deref()
+        .or(app.stats.partial_data_note.as_deref())
         .unwrap_or("")
         .to_string();
     f.render_widget(
@@ -91,6 +91,11 @@ fn render_body(f: &mut Frame, area: Rect, app: &App) {
 // MARK: - Stats header
 
 fn render_stats_header(f: &mut Frame, area: Rect, app: &App) {
+    // Thin separator line between stats and games section
+    let separator = Block::default().borders(Borders::BOTTOM);
+    let inner = separator.inner(area);
+    f.render_widget(separator, area);
+
     // Four equal columns: Games Played | Est. Sessions | Achievements | New Games
     let cols = Layout::horizontal([
         Constraint::Ratio(1, 4),
@@ -98,7 +103,7 @@ fn render_stats_header(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Ratio(1, 4),
         Constraint::Ratio(1, 4),
     ])
-    .split(area);
+    .split(inner);
 
     let games_value = app.stats.games_played.to_string();
     let sessions_value = app.stats.est_sessions.to_string();
@@ -145,10 +150,12 @@ fn render_stats_header(f: &mut Frame, area: Rect, app: &App) {
 fn render_games_section(f: &mut Frame, area: Rect, app: &App) {
     // Empty state: only show when Loaded with no data (AC-1.4)
     if matches!(app.state, AppState::Loaded) && app.top_games.is_empty() {
-        let msg = Paragraph::new(
-            "No activity in this period — run the app more frequently to build up history",
-        )
-        .block(Block::default().borders(Borders::NONE));
+        let text = if app.recent_games.is_empty() {
+            "No activity in this period — run the app more frequently to build up history"
+        } else {
+            "Building period stats — run the app a few more times to accumulate snapshots"
+        };
+        let msg = Paragraph::new(text).block(Block::default().borders(Borders::NONE));
         f.render_widget(msg, area);
         return;
     }
@@ -302,6 +309,7 @@ mod tests {
             achievement_cache: HashMap::new(),
             tx,
             force_achievement_refresh: false,
+            status_message: None,
         }
     }
 
@@ -340,6 +348,7 @@ mod tests {
             achievement_cache: HashMap::new(),
             tx,
             force_achievement_refresh: false,
+            status_message: None,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -371,6 +380,7 @@ mod tests {
             achievement_cache: HashMap::new(),
             tx,
             force_achievement_refresh: false,
+            status_message: None,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -401,6 +411,7 @@ mod tests {
             achievement_cache: HashMap::new(),
             tx,
             force_achievement_refresh: false,
+            status_message: None,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -431,6 +442,7 @@ mod tests {
             achievement_cache: HashMap::new(),
             tx,
             force_achievement_refresh: false,
+            status_message: None,
         };
 
         let buf = render_app(&app, 80, 24);
@@ -461,6 +473,7 @@ mod tests {
             achievement_cache: HashMap::new(),
             tx,
             force_achievement_refresh: false,
+            status_message: None,
         };
 
         let buf = render_app(&app, 80, 24);
