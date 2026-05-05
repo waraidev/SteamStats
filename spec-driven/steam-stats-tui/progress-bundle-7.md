@@ -15,8 +15,8 @@ Progress: 0/3 steps complete
 
 | Step | Status | Commit | Notes |
 |------|--------|--------|-------|
-| STEP-23 | done | — | main.rs startup wiring: Config→SnapshotStore→App→tokio::spawn fetch→run_tui |
-| STEP-24 | pending | — | — |
+| STEP-23 | done | 5bc1d6e | main.rs startup wiring: Config→SnapshotStore→App→tokio::spawn fetch→run_tui |
+| STEP-24 | done | — | App::with_tx, force_achievement_refresh, AchievementsPartial sum recompute, 'r' keybind |
 | STEP-25 | pending | — | — |
 
 ## Session Log
