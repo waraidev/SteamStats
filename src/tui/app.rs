@@ -53,17 +53,34 @@ pub struct App {
     pub stats: OverallStats,
     pub top_games: Vec<GameStats>,
     pub recent_games: Vec<RecentGame>,
-    /// Cached achievement counts keyed by appid. None means "not yet fetched".
+    /// Cached achievement counts keyed by appid.
+    /// - Key absent: not yet fetched.
+    /// - `Some(n)`: unlocked count.
+    /// - `None`: fetched but not available (private / no achievements).
     pub achievement_cache: HashMap<u32, Option<u64>>,
     /// Sender half for posting events to this app's event loop.
     pub tx: UnboundedSender<AppEvent>,
+    /// When `true`, the background task should re-fetch all game achievements
+    /// on its next cycle (set by the 'r' keybind).
+    pub force_achievement_refresh: bool,
 }
 
 impl App {
-    /// Create a new App in the Loading state with a fresh channel.
+    /// Create a new App in the Loading state with a fresh internal channel.
+    ///
+    /// Used in tests where the caller needs both halves of the channel.
     pub fn new() -> (App, UnboundedReceiver<AppEvent>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let app = App {
+        let app = App::with_tx(tx);
+        (app, rx)
+    }
+
+    /// Create a new App using an externally-created sender.
+    ///
+    /// Used from `main()` where the channel is created at the top level so that
+    /// background tasks and the App share the same sender.
+    pub fn with_tx(tx: UnboundedSender<AppEvent>) -> App {
+        App {
             state: AppState::Loading,
             current_period: Period::FourWeeks,
             stats: OverallStats {
@@ -77,8 +94,8 @@ impl App {
             recent_games: Vec::new(),
             achievement_cache: HashMap::new(),
             tx,
-        };
-        (app, rx)
+            force_achievement_refresh: false,
+        }
     }
 }
 
@@ -99,9 +116,18 @@ pub fn process_events(app: &mut App, rx: &mut UnboundedReceiver<AppEvent>) {
                 app.state = AppState::Loaded;
             }
             AppEvent::AchievementsPartial(batch) => {
+                // Merge partial results — existing entries NOT in this batch are preserved.
                 for (appid, count) in batch {
                     app.achievement_cache.insert(appid, Some(count));
                 }
+                // Recompute stats.achievements as sum of all Some(_) values in the cache.
+                // Remains None until first partial arrives (AC-9.2).
+                let total: u64 = app
+                    .achievement_cache
+                    .values()
+                    .filter_map(|v| *v)
+                    .sum();
+                app.stats.achievements = Some(total);
             }
             AppEvent::ApiError(msg) => {
                 app.state = AppState::Error(msg);
@@ -131,6 +157,10 @@ pub fn handle_key(app: &mut App, ev: Event) -> bool {
             }
             KeyCode::Char('q') | KeyCode::Esc => {
                 return true;
+            }
+            // 'r': trigger full achievement re-fetch on next background cycle.
+            KeyCode::Char('r') => {
+                app.force_achievement_refresh = true;
             }
             _ => {}
         }
@@ -374,5 +404,137 @@ mod tests {
         let (mut app, _rx) = make_app();
         handle_key(&mut app, key_event(KeyCode::Tab));
         assert_eq!(app.current_period, Period::SixMonths);
+    }
+
+    // MARK: - Tests (STEP-25): Achievement fan-out
+
+    // --- AchievementsPartial: first batch populates cache and sets stats.achievements ---
+
+    #[test]
+    fn achievement_partial_first_batch_sets_sum() {
+        let (mut app, mut rx) = make_app();
+        assert_eq!(app.stats.achievements, None, "starts as None before any partial");
+
+        let mut batch = HashMap::new();
+        batch.insert(730u32, 50u64);
+        batch.insert(440u32, 100u64);
+
+        app.tx
+            .send(AppEvent::AchievementsPartial(batch))
+            .unwrap();
+
+        process_events(&mut app, &mut rx);
+
+        assert_eq!(
+            app.achievement_cache.get(&730),
+            Some(&Some(50)),
+            "game 730 should have 50 achievements"
+        );
+        assert_eq!(
+            app.achievement_cache.get(&440),
+            Some(&Some(100)),
+            "game 440 should have 100 achievements"
+        );
+        assert_eq!(
+            app.stats.achievements,
+            Some(150),
+            "stats.achievements should be sum of all Some values"
+        );
+    }
+
+    // --- AchievementsPartial: existing entry preserved when new partial doesn't include it ---
+
+    #[test]
+    fn achievement_partial_preserves_existing_cache_entries() {
+        let (mut app, mut rx) = make_app();
+
+        // First partial: game 730 gets 50 achievements.
+        let mut first = HashMap::new();
+        first.insert(730u32, 50u64);
+        app.tx
+            .send(AppEvent::AchievementsPartial(first))
+            .unwrap();
+        process_events(&mut app, &mut rx);
+
+        assert_eq!(app.achievement_cache.get(&730), Some(&Some(50)));
+        assert_eq!(app.stats.achievements, Some(50));
+
+        // Second partial: only game 440 — game 730's entry must be preserved.
+        let mut second = HashMap::new();
+        second.insert(440u32, 100u64);
+        app.tx
+            .send(AppEvent::AchievementsPartial(second))
+            .unwrap();
+        process_events(&mut app, &mut rx);
+
+        assert_eq!(
+            app.achievement_cache.get(&730),
+            Some(&Some(50)),
+            "game 730 must be preserved (not in second batch)"
+        );
+        assert_eq!(
+            app.achievement_cache.get(&440),
+            Some(&Some(100)),
+            "game 440 should be added"
+        );
+        assert_eq!(
+            app.stats.achievements,
+            Some(150),
+            "sum should be 50 + 100 = 150"
+        );
+    }
+
+    // --- stats.achievements is None when achievement_cache is empty ---
+
+    #[test]
+    fn achievement_stats_is_none_when_cache_is_empty() {
+        let (app, _rx) = make_app();
+        assert_eq!(
+            app.stats.achievements, None,
+            "stats.achievements must be None before any AchievementsPartial event"
+        );
+        assert!(
+            app.achievement_cache.is_empty(),
+            "cache must start empty"
+        );
+    }
+
+    // --- stats.achievements sums only Some(_) values, ignoring None entries ---
+
+    #[test]
+    fn achievement_stats_sums_some_values_ignores_none() {
+        let (mut app, mut rx) = make_app();
+
+        // Pre-populate cache with a None entry (private game — no achievements available).
+        app.achievement_cache.insert(999u32, None);
+
+        // Send a partial with real data.
+        let mut batch = HashMap::new();
+        batch.insert(730u32, 42u64);
+        app.tx
+            .send(AppEvent::AchievementsPartial(batch))
+            .unwrap();
+        process_events(&mut app, &mut rx);
+
+        assert_eq!(
+            app.stats.achievements,
+            Some(42),
+            "None entries should not contribute to the sum"
+        );
+    }
+
+    // --- 'r' keybind sets force_achievement_refresh = true ---
+
+    #[test]
+    fn handle_key_r_sets_force_achievement_refresh() {
+        let (mut app, _rx) = make_app();
+        assert!(!app.force_achievement_refresh, "starts false");
+
+        handle_key(&mut app, key_event(KeyCode::Char('r')));
+
+        assert!(
+            app.force_achievement_refresh,
+            "'r' keybind should set force_achievement_refresh = true"
+        );
     }
 }
