@@ -15,11 +15,11 @@ Progress: 0/6 steps complete
 
 | Step | Status | Commit | Notes |
 |------|--------|--------|-------|
-| STEP-1 | pending | — | — |
-| STEP-2 | pending | — | — |
-| STEP-3 | pending | — | — |
-| STEP-4 | pending | — | — |
-| STEP-5 | pending | — | — |
-| STEP-6 | pending | — | — |
+| STEP-1 | in-progress | dab08bf | — |
+| STEP-2 | in-progress | 181153f | — |
+| STEP-3 | in-progress | b3e8647 | — |
+| STEP-4 | in-progress | adffbb5 | — |
+| STEP-5 | in-progress | 3e2d503 | — |
+| STEP-6 | in-progress | 77abef1 | — |
 
 ## Session Log
