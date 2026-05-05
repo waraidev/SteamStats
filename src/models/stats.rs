@@ -87,3 +87,62 @@ pub struct OverallStats {
 //       period: Period,
 //       now: u64,
 //   ) -> (Vec<GameStats>, OverallStats)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 2026-05-04 00:00:00 UTC → Unix timestamp 1746316800
+    const NOW_2026_05_04: u64 = 1746316800;
+
+    #[test]
+    fn four_weeks_window_is_28_days_before_now() {
+        let ts = Period::FourWeeks.window_start_ts(NOW_2026_05_04);
+        assert_eq!(ts, Some(NOW_2026_05_04 - 28 * 24 * 3600));
+    }
+
+    #[test]
+    fn four_weeks_window_using_bundle_example_ts() {
+        // Bundle verify: Period::FourWeeks.window_start_ts(1746360000) == Some(1746360000 - 28*24*3600)
+        let now: u64 = 1746360000;
+        let expected = now - 28 * 24 * 3600;
+        assert_eq!(Period::FourWeeks.window_start_ts(now), Some(expected));
+    }
+
+    #[test]
+    fn six_months_window_is_182_days_before_now() {
+        let ts = Period::SixMonths.window_start_ts(NOW_2026_05_04);
+        assert_eq!(ts, Some(NOW_2026_05_04 - 182 * 24 * 3600));
+    }
+
+    #[test]
+    fn this_year_window_is_jan_1_midnight_utc() {
+        // 2026-05-04 → window starts at 2026-01-01 00:00:00 UTC = 1735689600
+        let ts = Period::ThisYear.window_start_ts(NOW_2026_05_04);
+        // 2026-01-01 00:00:00 UTC
+        let jan1_2026: u64 = 1735689600;
+        assert_eq!(ts, Some(jan1_2026));
+    }
+
+    #[test]
+    fn lifetime_window_is_none() {
+        // AC-2.3: Lifetime bypasses delta computation — no window boundary
+        assert_eq!(Period::Lifetime.window_start_ts(NOW_2026_05_04), None);
+        assert_eq!(Period::Lifetime.window_start_ts(0), None);
+        assert_eq!(Period::Lifetime.window_start_ts(u64::MAX / 2), None);
+    }
+
+    #[test]
+    fn period_labels_are_correct() {
+        assert_eq!(Period::FourWeeks.label(), "4 Weeks");
+        assert_eq!(Period::SixMonths.label(), "6 Months");
+        assert_eq!(Period::ThisYear.label(), "This Year");
+        assert_eq!(Period::Lifetime.label(), "Lifetime");
+    }
+
+    #[test]
+    fn label_est_sessions_is_exact_string() {
+        // Spec constraint: must be exactly "Est. Sessions" — cannot be renamed
+        assert_eq!(LABEL_EST_SESSIONS, "Est. Sessions");
+    }
+}
