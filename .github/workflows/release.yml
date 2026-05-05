@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mac-x86
+            os: macos-13
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+          - name: mac-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+          - name: windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Archive binary (macOS/Linux)
+        if: matrix.archive_ext == 'tar.gz'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf steam-stats-${{ matrix.target }}.tar.gz steam-stats
+          mv steam-stats-${{ matrix.target }}.tar.gz ../../../
+
+      - name: Archive binary (Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path steam-stats.exe -DestinationPath ../../../steam-stats-${{ matrix.target }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-stats-${{ matrix.target }}
+          path: steam-stats-${{ matrix.target }}.${{ matrix.archive_ext }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "steam-stats ${{ github.ref_name }}" \
+            --generate-notes \
+            artifacts/*
+
+  update-scoop:
+    name: Update Scoop Manifest
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: steam-stats-x86_64-pc-windows-msvc
+          path: windows-artifact/
+
+      - name: Compute SHA256 and update Scoop manifest
+        run: |
+          WINDOWS_ZIP="windows-artifact/steam-stats-x86_64-pc-windows-msvc.zip"
+          SHA256=$(shasum -a 256 "$WINDOWS_ZIP" | awk '{ print $1 }')
+          VERSION="${{ github.ref_name }}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/steam-stats-x86_64-pc-windows-msvc.zip"
+
+          jq \
+            --arg version "${VERSION#v}" \
+            --arg url "$DOWNLOAD_URL" \
+            --arg hash "$SHA256" \
+            '.version = $version | .url = $url | .hash = $hash' \
+            scoop/steam-stats.json > scoop/steam-stats.json.tmp
+
+          mv scoop/steam-stats.json.tmp scoop/steam-stats.json
+
+      - name: Commit updated Scoop manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scoop/steam-stats.json
+          git commit -m "chore(scoop): update manifest for ${{ github.ref_name }}"
+          git push origin HEAD:main
