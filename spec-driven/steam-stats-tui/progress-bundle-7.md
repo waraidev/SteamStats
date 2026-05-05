@@ -15,7 +15,7 @@ Progress: 0/3 steps complete
 
 | Step | Status | Commit | Notes |
 |------|--------|--------|-------|
-| STEP-23 | pending | — | — |
+| STEP-23 | done | — | main.rs startup wiring: Config→SnapshotStore→App→tokio::spawn fetch→run_tui |
 | STEP-24 | pending | — | — |
 | STEP-25 | pending | — | — |
 
