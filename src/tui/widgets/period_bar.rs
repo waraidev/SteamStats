@@ -79,7 +79,10 @@ mod tests {
     fn four_weeks_label_appears_in_buffer() {
         let buf = render_period_bar(Period::FourWeeks, 80, 3);
         let content = buffer_to_string(&buf);
-        assert!(content.contains("4 Weeks"), "buffer should contain '4 Weeks'");
+        assert!(
+            content.contains("4 Weeks"),
+            "buffer should contain '4 Weeks'"
+        );
     }
 
     #[test]
@@ -88,7 +91,12 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                frame.render_widget(PeriodBar { selected: Period::FourWeeks }, frame.area());
+                frame.render_widget(
+                    PeriodBar {
+                        selected: Period::FourWeeks,
+                    },
+                    frame.area(),
+                );
             })
             .unwrap();
         let buf = terminal.backend().buffer().clone();
@@ -96,9 +104,7 @@ mod tests {
         // Each cell is 80/4 = 20 wide. The label "4 Weeks" (7 chars) is centered.
         // padding = (20 - 7) / 2 = 6, so label starts at x = 6
         // Search for any cell in first row (y=0) with BOLD set
-        let has_bold = (0..80u16).any(|x| {
-            buf[(x, 0)].modifier.contains(Modifier::BOLD)
-        });
+        let has_bold = (0..80u16).any(|x| buf[(x, 0)].modifier.contains(Modifier::BOLD));
         assert!(has_bold, "selected period cell should have BOLD modifier");
     }
 
@@ -108,16 +114,22 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                frame.render_widget(PeriodBar { selected: Period::FourWeeks }, frame.area());
+                frame.render_widget(
+                    PeriodBar {
+                        selected: Period::FourWeeks,
+                    },
+                    frame.area(),
+                );
             })
             .unwrap();
         let buf = terminal.backend().buffer().clone();
 
         // Cells 1-3 (x=20..79) should NOT have bold
-        let has_bold_outside = (20..80u16).any(|x| {
-            buf[(x, 0)].modifier.contains(Modifier::BOLD)
-        });
-        assert!(!has_bold_outside, "non-selected period cells should not be bold");
+        let has_bold_outside = (20..80u16).any(|x| buf[(x, 0)].modifier.contains(Modifier::BOLD));
+        assert!(
+            !has_bold_outside,
+            "non-selected period cells should not be bold"
+        );
     }
 
     #[test]

@@ -3,5 +3,9 @@ Info.plist
 # Spec-driven workflow session files (ephemeral)
 spec-driven/.sessions/
 
+# Local config (API key lives in XDG config dir — safety net)
+config.toml
+steam-stats.toml
+
 # Rust
 target/

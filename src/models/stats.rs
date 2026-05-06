@@ -26,8 +26,8 @@ impl Period {
             Period::ThisYear => {
                 // Jan 1 of the UTC year containing `now`, at midnight UTC
                 let dt = chrono::DateTime::from_timestamp(now as i64, 0)?;
-                let jan1 = chrono::NaiveDate::from_ymd_opt(dt.year(), 1, 1)?
-                    .and_hms_opt(0, 0, 0)?;
+                let jan1 =
+                    chrono::NaiveDate::from_ymd_opt(dt.year(), 1, 1)?.and_hms_opt(0, 0, 0)?;
                 let ts = jan1.and_utc().timestamp();
                 Some(ts as u64)
             }

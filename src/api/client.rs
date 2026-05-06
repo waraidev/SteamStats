@@ -42,7 +42,9 @@ struct PlayerStats {
     achievements: Vec<Achievement>,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Deserialize)]
 struct Achievement {
@@ -108,6 +110,8 @@ impl SteamClient {
 
         let url = format!("{}/IPlayerService/GetOwnedGames/v1", self.base_url);
 
+        // Steam API requires the API key as a `key=` query param (their design, not ours).
+        // The key does NOT appear in any log output — error paths only capture response body.
         let resp = self
             .client
             .get(&url)
@@ -173,10 +177,7 @@ impl SteamClient {
     /// Returns `SteamApiError::NotAvailable` on 403 or 400 (private stats or no achievements)
     /// so callers can skip this game without treating it as fatal (AD-5).
     pub async fn get_player_achievements(&self, appid: u32) -> Result<u32, SteamApiError> {
-        let url = format!(
-            "{}/ISteamUserStats/GetPlayerAchievements/v1",
-            self.base_url
-        );
+        let url = format!("{}/ISteamUserStats/GetPlayerAchievements/v1", self.base_url);
         let appid_str = appid.to_string();
 
         let resp = self
@@ -267,9 +268,8 @@ mod tests {
         let mut achievements: Vec<serde_json::Value> = (0..unlocked)
             .map(|_| serde_json::json!({"apiname": "ACH", "achieved": 1}))
             .collect();
-        achievements.extend(
-            (0..locked).map(|_| serde_json::json!({"apiname": "LACH", "achieved": 0})),
-        );
+        achievements
+            .extend((0..locked).map(|_| serde_json::json!({"apiname": "LACH", "achieved": 0})));
         serde_json::json!({
             "playerstats": {
                 "steamID": "76561198000000001",
@@ -297,8 +297,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         let games = client.get_owned_games().await.expect("should succeed");
 
         assert_eq!(games.len(), 2);
@@ -314,13 +313,14 @@ mod tests {
         Mock::given(method("GET"))
             .and(path_regex("/IPlayerService/GetOwnedGames/v1"))
             .and(query_param("key", "secret_key_xyz"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(owned_games_json(
-                serde_json::json!([]),
-            )))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(owned_games_json(serde_json::json!([]))),
+            )
             .mount(&server)
             .await;
 
-        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "secret_key_xyz");
+        let client =
+            SteamClient::with_base_url(server.uri(), "76561198000000001", "secret_key_xyz");
         let games = client.get_owned_games().await.expect("should succeed");
         assert_eq!(games.len(), 0);
     }
@@ -333,16 +333,15 @@ mod tests {
             .and(path_regex("/IPlayerService/GetRecentlyPlayedGames/v1"))
             .and(query_param("steamid", "76561198000000001"))
             .and(query_param("key", "test_api_key"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(recently_played_json(
-                serde_json::json!([
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(recently_played_json(serde_json::json!([
                     {"appid": 440, "name": "TF2", "playtime_2weeks": 120, "playtime_forever": 5000}
-                ]),
-            )))
+                ]))),
+            )
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         let games = client.get_recently_played().await.expect("should succeed");
 
         assert_eq!(games.len(), 1);
@@ -361,8 +360,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         let result = client.get_player_achievements(730).await;
 
         assert!(
@@ -383,8 +381,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         let result = client.get_player_achievements(12345).await;
 
         assert!(matches!(result, Err(SteamApiError::NotAvailable)));
@@ -398,16 +395,13 @@ mod tests {
         Mock::given(method("GET"))
             .and(path_regex("/ISteamUserStats/GetPlayerAchievements/v1"))
             .and(query_param("appid", "32370"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_json(serde_json::json!({
-                    "playerstats": {"error": "Internal server error", "success": false}
-                })),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "playerstats": {"error": "Internal server error", "success": false}
+            })))
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         let result = client.get_player_achievements(32370).await;
 
         assert!(
@@ -423,16 +417,13 @@ mod tests {
         Mock::given(method("GET"))
             .and(path_regex("/ISteamUserStats/GetPlayerAchievements/v1"))
             .and(query_param("appid", "99999"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "playerstats": {"success": false}
-                })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "playerstats": {"success": false}
+            })))
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         let result = client.get_player_achievements(99999).await;
 
         assert!(
@@ -451,14 +442,11 @@ mod tests {
             .and(query_param("steamid", "76561198000000001"))
             .and(query_param("key", "test_api_key"))
             .and(query_param("appid", "570"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(achievements_json(3, 2)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(achievements_json(3, 2)))
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         let count = client
             .get_player_achievements(570)
             .await
@@ -473,17 +461,53 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path_regex("/IPlayerService/GetOwnedGames/v1"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(owned_games_json(
-                serde_json::json!([]),
-            )))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(owned_games_json(serde_json::json!([]))),
+            )
             .mount(&server)
             .await;
 
-        let client =
-            SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000001", "test_api_key");
         assert!(!client.owned_games_fetched(), "Flag should start false");
         client.get_owned_games().await.expect("should succeed");
-        assert!(client.owned_games_fetched(), "Flag should be true after fetch");
+        assert!(
+            client.owned_games_fetched(),
+            "Flag should be true after fetch"
+        );
+    }
+
+    // ── Non-2xx error paths (VF-7) ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_owned_games_non2xx_returns_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex("/IPlayerService/GetOwnedGames/v1"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000000", "key");
+        let result = client.get_owned_games().await;
+        assert!(
+            matches!(result, Err(SteamApiError::ApiError(_))),
+            "503 should map to ApiError, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_recently_played_non2xx_returns_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex("/IPlayerService/GetRecentlyPlayedGames/v1"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let client = SteamClient::with_base_url(server.uri(), "76561198000000000", "key");
+        let result = client.get_recently_played().await;
+        assert!(
+            matches!(result, Err(SteamApiError::ApiError(_))),
+            "401 should map to ApiError, got: {result:?}"
+        );
     }
 
     /// AC-3.4: a second call to get_owned_games must NOT fire a second HTTP request.
@@ -507,10 +531,16 @@ mod tests {
 
         let client = SteamClient::with_base_url(server.uri(), "12345", "test_key");
 
-        let first = client.get_owned_games().await.expect("first call should succeed");
+        let first = client
+            .get_owned_games()
+            .await
+            .expect("first call should succeed");
         assert_eq!(first.len(), 1, "First call should return the game");
 
-        let second = client.get_owned_games().await.expect("second call should succeed");
+        let second = client
+            .get_owned_games()
+            .await
+            .expect("second call should succeed");
         assert_eq!(second.len(), 1, "Second call should return cached result");
 
         // MockServer drops here and verifies exactly 1 request was received.

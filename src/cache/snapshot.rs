@@ -150,54 +150,41 @@ impl SnapshotStore {
     /// - `Period::Lifetime` returns all-time totals (no window filtering).
     pub fn delta_for_period(&self, period: &Period, now_ts: u64) -> (Vec<GameStats>, OverallStats) {
         let snapshots = self.load();
+        Self::delta_from_snapshots(&snapshots, period, now_ts)
+    }
+
+    /// Compute period stats from an already-loaded snapshot slice.
+    ///
+    /// Extracted from `delta_for_period` so the App can recompute on period switch
+    /// without re-reading from disk (VF-1 / AC-2.2, AC-2.3, AC-3.4).
+    pub fn delta_from_snapshots(
+        snapshots: &[Snapshot],
+        period: &Period,
+        now_ts: u64,
+    ) -> (Vec<GameStats>, OverallStats) {
+        let empty_stats = || OverallStats {
+            games_played: 0,
+            est_sessions: 0,
+            achievements: None,
+            new_games: 0,
+            partial_data_note: None,
+        };
 
         // For Lifetime, return zeroed overall stats (no deltas without boundary).
         if *period == Period::Lifetime {
-            return (
-                vec![],
-                OverallStats {
-                    games_played: 0,
-                    est_sessions: 0,
-                    achievements: None,
-                    new_games: 0,
-                    partial_data_note: None,
-                },
-            );
+            return (vec![], empty_stats());
         }
 
         let window_start = match period.window_start_ts(now_ts) {
             Some(ts) => ts,
-            None => {
-                return (
-                    vec![],
-                    OverallStats {
-                        games_played: 0,
-                        est_sessions: 0,
-                        achievements: None,
-                        new_games: 0,
-                        partial_data_note: None,
-                    },
-                )
-            }
+            None => return (vec![], empty_stats()),
         };
 
         // Filter to snapshots within the window.
-        let windowed: Vec<&Snapshot> = snapshots
-            .iter()
-            .filter(|s| s.ts >= window_start)
-            .collect();
+        let windowed: Vec<&Snapshot> = snapshots.iter().filter(|s| s.ts >= window_start).collect();
 
         if windowed.is_empty() {
-            return (
-                vec![],
-                OverallStats {
-                    games_played: 0,
-                    est_sessions: 0,
-                    achievements: None,
-                    new_games: 0,
-                    partial_data_note: None,
-                },
-            );
+            return (vec![], empty_stats());
         }
 
         // Build per-game min/max playtime across the windowed snapshots.
@@ -244,7 +231,7 @@ impl SnapshotStore {
         }
 
         let est_sessions = Self::session_estimate(&windowed);
-        let new_games = Self::new_games_in_period(&snapshots, window_start);
+        let new_games = Self::new_games_in_period(snapshots, window_start);
 
         let overall = OverallStats {
             games_played: game_stats.len() as u64,
@@ -337,15 +324,12 @@ mod tests {
     fn make_snapshot(ts: u64, games: &[(&str, u64)]) -> Snapshot {
         let mut game_map = HashMap::new();
         for (appid, pt) in games {
-            game_map.insert(
-                appid.to_string(),
-                GameEntry {
-                    pt: *pt,
-                    ach: None,
-                },
-            );
+            game_map.insert(appid.to_string(), GameEntry { pt: *pt, ach: None });
         }
-        Snapshot { ts, games: game_map }
+        Snapshot {
+            ts,
+            games: game_map,
+        }
     }
 
     // ── append + load round-trip ──────────────────────────────────────────────
@@ -395,7 +379,10 @@ mod tests {
 
         // The .tmp file must not exist after a successful write.
         let tmp = path.with_extension("ndjson.tmp");
-        assert!(!tmp.exists(), ".tmp file should not remain after atomic write");
+        assert!(
+            !tmp.exists(),
+            ".tmp file should not remain after atomic write"
+        );
     }
 
     // ── delta_for_period boundary condition ───────────────────────────────────
@@ -420,8 +407,7 @@ mod tests {
         let (games, overall) = store.delta_for_period(&Period::FourWeeks, now);
         assert_eq!(games.len(), 1);
         assert_eq!(
-            games[0].playtime_delta_minutes,
-            50,
+            games[0].playtime_delta_minutes, 50,
             "delta should be 50 (1050-1000), not 1050"
         );
         assert_eq!(overall.games_played, 1);
@@ -458,9 +444,7 @@ mod tests {
         store
             .append(&make_snapshot(day_a_late, &[("1", 120)]))
             .unwrap();
-        store
-            .append(&make_snapshot(day_b, &[("1", 130)]))
-            .unwrap();
+        store.append(&make_snapshot(day_b, &[("1", 130)])).unwrap();
 
         let (_, overall) = store.delta_for_period(&Period::FourWeeks, now);
         assert_eq!(
@@ -492,7 +476,10 @@ mod tests {
             .append(&make_snapshot(inside_window, &[("old", 60), ("new", 10)]))
             .unwrap();
         store
-            .append(&make_snapshot(inside_window + 1000, &[("old", 70), ("new", 20)]))
+            .append(&make_snapshot(
+                inside_window + 1000,
+                &[("old", 70), ("new", 20)],
+            ))
             .unwrap();
 
         let (_, overall) = store.delta_for_period(&Period::FourWeeks, now);
@@ -514,7 +501,10 @@ mod tests {
             .append(&make_snapshot(before, &[("1", 100), ("2", 200)]))
             .unwrap();
         store
-            .append(&make_snapshot(window_start + 1000, &[("1", 110), ("2", 210)]))
+            .append(&make_snapshot(
+                window_start + 1000,
+                &[("1", 110), ("2", 210)],
+            ))
             .unwrap();
 
         let (_, overall) = store.delta_for_period(&Period::FourWeeks, now);
@@ -546,6 +536,50 @@ mod tests {
         assert_eq!(loaded.len(), 2, "malformed line should be skipped");
         assert_eq!(loaded[0].ts, 1000);
         assert_eq!(loaded[1].ts, 3000);
+    }
+
+    // ── top_games sort order and 1-based ranks (VF-8) ────────────────────────
+
+    #[test]
+    fn test_delta_for_period_top_games_sorted_descending_with_1based_ranks() {
+        let now: u64 = 1746316800;
+        let window_start = now - 28 * 24 * 3600;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snapshots.ndjson");
+        let store = SnapshotStore::with_path(path);
+
+        // Two snapshots: game A gains 90min, game B gains 30min, game C gains 60min.
+        // Expected sort (desc): A(90) → C(60) → B(30), ranks 1, 2, 3.
+        let snap1 = make_snapshot(window_start + 100, &[("A", 100), ("B", 200), ("C", 300)]);
+        let snap2 = make_snapshot(window_start + 200, &[("A", 190), ("B", 230), ("C", 360)]);
+        store.append(&snap1).unwrap();
+        store.append(&snap2).unwrap();
+
+        let (games, _) = store.delta_for_period(&Period::FourWeeks, now);
+
+        assert_eq!(games.len(), 3, "all 3 games should appear");
+        assert!(
+            games[0].playtime_delta_minutes >= games[1].playtime_delta_minutes
+                && games[1].playtime_delta_minutes >= games[2].playtime_delta_minutes,
+            "top_games must be sorted descending by playtime_delta_minutes"
+        );
+        assert_eq!(games[0].rank, 1);
+        assert_eq!(games[1].rank, 2);
+        assert_eq!(games[2].rank, 3);
+        // Spot-check the expected order by delta values.
+        assert_eq!(
+            games[0].playtime_delta_minutes, 90,
+            "game A should be first"
+        );
+        assert_eq!(
+            games[1].playtime_delta_minutes, 60,
+            "game C should be second"
+        );
+        assert_eq!(
+            games[2].playtime_delta_minutes, 30,
+            "game B should be third"
+        );
     }
 
     // ── load missing file → empty vec ─────────────────────────────────────────

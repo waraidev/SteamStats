@@ -2,20 +2,20 @@
 
 > Tasks: spec-driven/steam-stats-tui/tasks.md | Bundle: 8 | Started: — | Last Updated: —
 
-Progress: 0/2 steps complete
+Progress: 2/2 steps complete
 
 ## Current State
 
 - Stage: integration
-- Last completed: — (not started)
-- Next up: STEP-26 — Create release workflow
+- Last completed: STEP-27 — Homebrew formula
+- Next up: — (bundle complete)
 - Blockers: none
 
 ## Step Status
 
 | Step | Status | Commit | Notes |
 |------|--------|--------|-------|
-| STEP-26 | pending | — | — |
-| STEP-27 | pending | — | — |
+| STEP-26 | completed | a839748 | — |
+| STEP-27 | completed | 12c66e6 | — |
 
 ## Session Log

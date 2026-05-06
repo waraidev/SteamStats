@@ -74,7 +74,10 @@ mod tests {
         let buf = terminal.backend().buffer().clone();
         let content = buf_string(&buf);
         assert!(content.contains("42"), "buffer should contain '42'");
-        assert!(content.contains("Est. Sessions"), "buffer should contain 'Est. Sessions'");
+        assert!(
+            content.contains("Est. Sessions"),
+            "buffer should contain 'Est. Sessions'"
+        );
     }
 
     #[test]

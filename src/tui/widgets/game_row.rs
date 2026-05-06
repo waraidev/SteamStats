@@ -40,11 +40,11 @@ impl Widget for GameRow {
         // Layout: [rank:4] [name:flex] [percent:7] [gauge:flex] [hours:8]
         // The spec says "gauge (remaining - 12)". We model that as Min(0) flex.
         let constraints = [
-            Constraint::Length(4),  // rank
-            Constraint::Min(8),     // name (flexible, at least 8)
-            Constraint::Length(7),  // percent
-            Constraint::Min(4),     // gauge (flexible)
-            Constraint::Length(8),  // hours
+            Constraint::Length(4), // rank
+            Constraint::Min(8),    // name (flexible, at least 8)
+            Constraint::Length(7), // percent
+            Constraint::Min(4),    // gauge (flexible)
+            Constraint::Length(8), // hours
         ];
         let cols = Layout::horizontal(constraints).split(area);
 

@@ -16,6 +16,6 @@ Progress: 2/2 steps complete
 | Step | Status | Commit | Notes |
 |------|--------|--------|-------|
 | STEP-7 | done | f43a7fe | — |
-| STEP-8 | done | — | — |
+| STEP-8 | done | f43a7fe | — |
 
 ## Session Log

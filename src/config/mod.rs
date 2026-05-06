@@ -60,14 +60,18 @@ pub enum ConfigError {
 /// `dirs::home_dir().join(".config")` so the path is correct on both
 /// macOS and Linux.
 pub fn default_config_path() -> PathBuf {
-    let base = dirs::config_dir()
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"));
+    let base =
+        dirs::config_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"));
     base.join("steam-stats").join("config.toml")
 }
 
 // ---------------------------------------------------------------------------
 // Config impl
 // ---------------------------------------------------------------------------
+
+fn is_valid_steam_id(s: &str) -> bool {
+    s.len() == 17 && s.chars().all(|c| c.is_ascii_digit())
+}
 
 impl Config {
     /// Load config from the default path (`~/.config/steam-stats/config.toml`).
@@ -105,7 +109,7 @@ impl Config {
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             let trimmed = input.trim().to_string();
-            if trimmed.len() == 17 && trimmed.chars().all(|c| c.is_ascii_digit()) {
+            if is_valid_steam_id(&trimmed) {
                 break trimmed;
             }
             eprintln!(
@@ -132,6 +136,11 @@ impl Config {
         let toml_content =
             toml::to_string(&config).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         std::fs::write(path, toml_content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
 
         Ok(config)
     }
@@ -190,6 +199,48 @@ unknown_future_field = "some_value"
         );
         let config = Config::load_from(f.path()).expect("extra fields should not cause failure");
         assert_eq!(config.steam_id, "76561198012345678");
+    }
+
+    // ── is_valid_steam_id (VF-2) ──────────────────────────────────────────────
+
+    #[test]
+    fn test_valid_steam_id_accepts_17_digits() {
+        assert!(is_valid_steam_id("76561198012345678"));
+    }
+
+    #[test]
+    fn test_invalid_steam_id_rejects_empty() {
+        assert!(!is_valid_steam_id(""));
+    }
+
+    #[test]
+    fn test_invalid_steam_id_rejects_non_numeric() {
+        assert!(!is_valid_steam_id("7656119801234567A"));
+    }
+
+    #[test]
+    fn test_invalid_steam_id_rejects_too_short() {
+        assert!(!is_valid_steam_id("7656119801234567")); // 16 digits
+    }
+
+    #[test]
+    fn test_invalid_steam_id_rejects_too_long() {
+        assert!(!is_valid_steam_id("765611980123456789")); // 18 digits
+    }
+
+    // ── Config::load() discovery (VF-17) ─────────────────────────────────────
+
+    #[test]
+    fn test_config_load_returns_not_found_when_no_config_file() {
+        // Use load_from() with a path in a temp dir to verify Config discovery
+        // returns NotFound when the file is absent (AC-5.1, AC-5.2).
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir.path().join("steam-stats").join("config.toml");
+        let err = Config::load_from(&absent).expect_err("should be NotFound");
+        assert!(
+            matches!(err, ConfigError::NotFound),
+            "expected NotFound, got {err:?}"
+        );
     }
 
     #[test]

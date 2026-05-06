@@ -41,19 +41,37 @@ pub fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     let status_bar_area = outer[3];
 
     // Period bar
-    f.render_widget(PeriodBar { selected: app.current_period }, period_bar_area);
+    f.render_widget(
+        PeriodBar {
+            selected: app.current_period,
+        },
+        period_bar_area,
+    );
 
     // Body sub-layout
     render_body(f, body_area, app);
 
-    // Hint bar
-    let hint = Line::from(vec![
-        Span::raw("← → "),
-        Span::styled("switch period", Style::default().add_modifier(Modifier::DIM)),
-        Span::raw("   "),
-        Span::raw("q "),
-        Span::styled("quit", Style::default().add_modifier(Modifier::DIM)),
-    ]);
+    // Hint bar — content changes in Error state (AC-3.3).
+    let hint = if matches!(app.state, AppState::Error(_)) {
+        Line::from(vec![
+            Span::raw("r "),
+            Span::styled("retry", Style::default().add_modifier(Modifier::DIM)),
+            Span::raw("   "),
+            Span::raw("q "),
+            Span::styled("quit", Style::default().add_modifier(Modifier::DIM)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::raw("← → "),
+            Span::styled(
+                "switch period",
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+            Span::raw("   "),
+            Span::raw("q "),
+            Span::styled("quit", Style::default().add_modifier(Modifier::DIM)),
+        ])
+    };
     f.render_widget(Paragraph::new(hint), hint_bar_area);
 
     // Status bar — prefer status_message (background errors) over partial_data_note
@@ -176,16 +194,17 @@ fn render_games_section(f: &mut Frame, area: Rect, app: &App) {
 
     // Normal: render each game as a GameRow.
     // Compute total minutes for percent share.
-    let total_minutes: u64 = app
-        .top_games
-        .iter()
-        .map(|g| g.playtime_delta_minutes)
-        .sum();
+    let total_minutes: u64 = app.top_games.iter().map(|g| g.playtime_delta_minutes).sum();
 
     let row_height = 1u16;
     let available_rows = (area.height / row_height).min(app.top_games.len() as u16);
 
-    for (i, game) in app.top_games.iter().take(available_rows as usize).enumerate() {
+    for (i, game) in app
+        .top_games
+        .iter()
+        .take(available_rows as usize)
+        .enumerate()
+    {
         let row_area = Rect {
             x: area.x,
             y: area.y + i as u16 * row_height,
@@ -218,7 +237,7 @@ fn render_recent_section(f: &mut Frame, area: Rect, app: &App) {
     // AC-6.2: empty recent games → "No recent activity"
     if app.recent_games.is_empty() {
         let block = Block::default()
-            .title(" Recently Played ")
+            .title(" Recently Played (2 wks) ")
             .borders(Borders::TOP);
         let inner = block.inner(area);
         f.render_widget(block, area);
@@ -227,7 +246,7 @@ fn render_recent_section(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let block = Block::default()
-        .title(" Recently Played ")
+        .title(" Recently Played (2 wks) ")
         .borders(Borders::TOP);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -310,6 +329,8 @@ mod tests {
             tx,
             force_achievement_refresh: false,
             status_message: None,
+            config: None,
+            snapshots: vec![],
         }
     }
 
@@ -349,6 +370,8 @@ mod tests {
             tx,
             force_achievement_refresh: false,
             status_message: None,
+            config: None,
+            snapshots: vec![],
         };
 
         let buf = render_app(&app, 80, 24);
@@ -381,6 +404,8 @@ mod tests {
             tx,
             force_achievement_refresh: false,
             status_message: None,
+            config: None,
+            snapshots: vec![],
         };
 
         let buf = render_app(&app, 80, 24);
@@ -412,6 +437,8 @@ mod tests {
             tx,
             force_achievement_refresh: false,
             status_message: None,
+            config: None,
+            snapshots: vec![],
         };
 
         let buf = render_app(&app, 80, 24);
@@ -443,6 +470,8 @@ mod tests {
             tx,
             force_achievement_refresh: false,
             status_message: None,
+            config: None,
+            snapshots: vec![],
         };
 
         let buf = render_app(&app, 80, 24);
@@ -474,6 +503,8 @@ mod tests {
             tx,
             force_achievement_refresh: false,
             status_message: None,
+            config: None,
+            snapshots: vec![],
         };
 
         let buf = render_app(&app, 80, 24);
@@ -484,7 +515,7 @@ mod tests {
         );
     }
 
-    // --- Loaded app renders game names ---
+    // --- Loaded app renders game names and rank prefix (VF-19) ---
 
     #[test]
     fn loaded_app_renders_game_names() {
@@ -494,6 +525,10 @@ mod tests {
         assert!(
             content.contains("Counter-Strike"),
             "buffer should contain game name"
+        );
+        assert!(
+            content.contains("1.") || content.contains("1 "),
+            "buffer should contain rank prefix '1.' or '1 ' for the top game"
         );
     }
 }

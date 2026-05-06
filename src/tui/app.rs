@@ -11,6 +11,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+use crate::api::client::SteamClient;
+use crate::cache::snapshot::{Snapshot, SnapshotStore};
+use crate::config::Config;
 use crate::models::stats::{GameStats, OverallStats, Period};
 use crate::models::steam::{OwnedGame, RecentGame};
 
@@ -35,6 +38,8 @@ pub enum AppEvent {
     DataLoaded {
         owned: Vec<OwnedGame>,
         recent: Vec<RecentGame>,
+        /// Snapshots reloaded after the new one was appended — used for period stats.
+        snapshots: Vec<Snapshot>,
     },
     /// Achievement data for a batch of games has arrived (may arrive multiple times).
     /// Value is `Some(count)` for games with achievements, `None` for unavailable/private games.
@@ -69,6 +74,11 @@ pub struct App {
     /// Most recent non-fatal warning from background tasks, shown in the status bar.
     /// Displayed instead of partial_data_note when set.
     pub status_message: Option<String>,
+    /// Config stored for retry spawning. None in tests; Some in production (set by main).
+    pub config: Option<Config>,
+    /// Snapshots loaded from disk, updated each time DataLoaded fires.
+    /// Used by recompute_for_period to avoid re-reading disk on period switch (AC-3.4 / VF-1).
+    pub snapshots: Vec<Snapshot>,
 }
 
 impl App {
@@ -79,6 +89,27 @@ impl App {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let app = App::with_tx(tx);
         (app, rx)
+    }
+
+    /// Recompute top_games and period stats from self.snapshots for self.current_period.
+    ///
+    /// Called after a period change (handle_key Left/Right/Tab) and after DataLoaded
+    /// stores a fresh snapshot set. Preserves stats.games_played (total owned count)
+    /// set by the DataLoaded handler (AC-2.2, AC-2.3, AC-3.4 / VF-1).
+    pub fn recompute_for_period(&mut self) {
+        if self.snapshots.is_empty() {
+            return;
+        }
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let games_played = self.stats.games_played;
+        let (games, overall) =
+            SnapshotStore::delta_from_snapshots(&self.snapshots, &self.current_period, now_ts);
+        self.top_games = games;
+        self.stats = overall;
+        self.stats.games_played = games_played;
     }
 
     /// Create a new App using an externally-created sender.
@@ -102,6 +133,8 @@ impl App {
             tx,
             force_achievement_refresh: false,
             status_message: None,
+            config: None,
+            snapshots: vec![],
         }
     }
 }
@@ -115,28 +148,38 @@ impl App {
 pub fn process_events(app: &mut App, rx: &mut UnboundedReceiver<AppEvent>) {
     while let Ok(ev) = rx.try_recv() {
         match ev {
-            AppEvent::DataLoaded { owned, recent } => {
+            AppEvent::DataLoaded {
+                owned,
+                recent,
+                snapshots,
+            } => {
                 app.stats.games_played = owned.len() as u64;
+                app.snapshots = snapshots;
 
-                // Build top_games from recently played using playtime_2weeks as the delta.
-                // This is the best available breakdown until snapshot-based deltas are ready.
-                let mut games: Vec<GameStats> = recent
-                    .iter()
-                    .filter(|g| g.playtime_2weeks > 0)
-                    .map(|g| GameStats {
-                        appid: g.appid,
-                        name: g.name.clone(),
-                        playtime_delta_minutes: g.playtime_2weeks as u64,
-                        playtime_forever_minutes: g.playtime_forever as u64,
-                        achievement_count: None,
-                        rank: 0,
-                    })
-                    .collect();
-                games.sort_by(|a, b| b.playtime_delta_minutes.cmp(&a.playtime_delta_minutes));
-                for (i, g) in games.iter_mut().enumerate() {
-                    g.rank = i + 1;
+                if !app.snapshots.is_empty() {
+                    // Snapshot-based period stats (AC-2.2, AC-2.3 / VF-1).
+                    app.recompute_for_period();
+                } else {
+                    // Fallback: use recently_played for top_games on first launch (no snapshots yet).
+                    let mut games: Vec<GameStats> = recent
+                        .iter()
+                        .filter(|g| g.playtime_2weeks > 0)
+                        .map(|g| GameStats {
+                            appid: g.appid,
+                            name: g.name.clone(),
+                            playtime_delta_minutes: g.playtime_2weeks,
+                            playtime_forever_minutes: g.playtime_forever,
+                            achievement_count: None,
+                            rank: 0,
+                        })
+                        .collect();
+                    games.sort_by(|a, b| b.playtime_delta_minutes.cmp(&a.playtime_delta_minutes));
+                    for (i, g) in games.iter_mut().enumerate() {
+                        g.rank = i + 1;
+                    }
+                    app.top_games = games;
                 }
-                app.top_games = games;
+
                 app.recent_games = recent;
                 // Clear any stale status message from before data loaded.
                 app.status_message = None;
@@ -150,11 +193,7 @@ pub fn process_events(app: &mut App, rx: &mut UnboundedReceiver<AppEvent>) {
                 }
                 // Recompute stats.achievements as sum of all Some(_) values in the cache.
                 // Remains None until first partial arrives (AC-9.2).
-                let total: u64 = app
-                    .achievement_cache
-                    .values()
-                    .filter_map(|v| *v)
-                    .sum();
+                let total: u64 = app.achievement_cache.values().filter_map(|v| *v).sum();
                 app.stats.achievements = Some(total);
             }
             AppEvent::ApiError(msg) => {
@@ -181,17 +220,46 @@ pub fn handle_key(app: &mut App, ev: Event) -> bool {
             // Forward period cycle: FourWeeks → SixMonths → ThisYear → Lifetime → FourWeeks
             KeyCode::Right | KeyCode::Tab => {
                 app.current_period = next_period(app.current_period);
+                app.recompute_for_period();
             }
             // Backward period cycle
             KeyCode::Left | KeyCode::BackTab => {
                 app.current_period = prev_period(app.current_period);
+                app.recompute_for_period();
             }
             KeyCode::Char('q') | KeyCode::Esc => {
                 return true;
             }
-            // 'r': trigger full achievement re-fetch on next background cycle.
+            // 'r': in Error state → retry data fetch; otherwise → trigger achievement re-fetch.
             KeyCode::Char('r') => {
-                app.force_achievement_refresh = true;
+                if let AppState::Error(_) = &app.state {
+                    app.state = AppState::Loading;
+                    if let Some(ref cfg) = app.config {
+                        let tx = app.tx.clone();
+                        let steam_id = cfg.steam_id.clone();
+                        let api_key = cfg.steam_api_key.clone();
+                        let existing_snapshots = app.snapshots.clone();
+                        tokio::spawn(async move {
+                            let client = SteamClient::new(&steam_id, &api_key);
+                            let owned = match client.get_owned_games().await {
+                                Ok(games) => games,
+                                Err(e) => {
+                                    let _ =
+                                        tx.send(AppEvent::ApiError(format!("Retry failed: {e}")));
+                                    return;
+                                }
+                            };
+                            let recent = client.get_recently_played().await.unwrap_or_default();
+                            let _ = tx.send(AppEvent::DataLoaded {
+                                owned,
+                                recent,
+                                snapshots: existing_snapshots,
+                            });
+                        });
+                    }
+                } else {
+                    app.force_achievement_refresh = true;
+                }
             }
             _ => {}
         }
@@ -277,6 +345,8 @@ fn run_loop<B: ratatui::backend::Backend>(
 
 // MARK: - Tests (STEP-22)
 
+// MANUAL: background task calls store.append() after DataLoaded wiring — verified by integration test or code inspection.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +371,7 @@ mod tests {
             .send(AppEvent::DataLoaded {
                 owned: vec![],
                 recent: vec![],
+                snapshots: vec![],
             })
             .unwrap();
 
@@ -333,6 +404,7 @@ mod tests {
             .send(AppEvent::DataLoaded {
                 owned,
                 recent: vec![],
+                snapshots: vec![],
             })
             .unwrap();
 
@@ -351,10 +423,7 @@ mod tests {
             .unwrap();
 
         process_events(&mut app, &mut rx);
-        assert_eq!(
-            app.state,
-            AppState::Error("connection refused".to_string())
-        );
+        assert_eq!(app.state, AppState::Error("connection refused".to_string()));
     }
 
     // --- AchievementsPartial merges into cache ---
@@ -367,9 +436,7 @@ mod tests {
         batch.insert(730u32, Some(42u64));
         batch.insert(4000u32, Some(7u64));
 
-        app.tx
-            .send(AppEvent::AchievementsPartial(batch))
-            .unwrap();
+        app.tx.send(AppEvent::AchievementsPartial(batch)).unwrap();
 
         process_events(&mut app, &mut rx);
         assert_eq!(app.achievement_cache.get(&730), Some(&Some(42)));
@@ -419,6 +486,78 @@ mod tests {
         assert_eq!(app.current_period, Period::FourWeeks);
     }
 
+    // --- VF-1: period switch recomputes top_games from snapshots (AC-2.2, AC-2.3, AC-3.4) ---
+
+    #[test]
+    fn test_period_switch_recomputes_top_games_from_snapshots() {
+        use crate::cache::snapshot::{GameEntry, Snapshot};
+        use std::collections::HashMap;
+
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let within_4weeks = now_ts - 7 * 24 * 3600; // 1 week ago
+
+        let mut g1 = HashMap::new();
+        g1.insert("42".to_string(), GameEntry { pt: 0, ach: None });
+        let mut g2 = HashMap::new();
+        g2.insert("42".to_string(), GameEntry { pt: 90, ach: None });
+
+        let snapshots = vec![
+            Snapshot {
+                ts: within_4weeks,
+                games: g1,
+            },
+            Snapshot {
+                ts: within_4weeks + 3600,
+                games: g2,
+            },
+        ];
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::with_tx(tx);
+        app.snapshots = snapshots;
+        app.state = AppState::Loaded;
+
+        // FourWeeks window includes the snapshots — expect 1 active game.
+        assert_eq!(app.current_period, Period::FourWeeks);
+        app.recompute_for_period();
+        assert_eq!(
+            app.top_games.len(),
+            1,
+            "FourWeeks window should see game 42"
+        );
+        assert_eq!(app.top_games[0].playtime_delta_minutes, 90);
+
+        // Advance to Lifetime — delta_from_snapshots returns empty (no boundary for all-time).
+        handle_key(&mut app, key_event(KeyCode::Right)); // FourWeeks → SixMonths
+        handle_key(&mut app, key_event(KeyCode::Right)); // SixMonths → ThisYear
+        handle_key(&mut app, key_event(KeyCode::Right)); // ThisYear → Lifetime
+        assert_eq!(app.current_period, Period::Lifetime);
+        assert!(
+            app.top_games.is_empty(),
+            "Lifetime period returns no snapshot deltas"
+        );
+    }
+
+    // --- AC-3.4: period switch must not enqueue any event (VF-6) ---
+
+    #[test]
+    fn test_period_switch_does_not_trigger_refetch() {
+        let (mut app, mut rx) = make_app();
+        app.state = AppState::Loaded;
+        handle_key(&mut app, key_event(KeyCode::Right));
+        assert!(
+            rx.try_recv().is_err(),
+            "period switch must not enqueue an event"
+        );
+        assert!(
+            !app.force_achievement_refresh,
+            "period switch must not trigger achievement refresh"
+        );
+    }
+
     // --- handle_key: q returns true (quit signal) ---
 
     #[test]
@@ -444,15 +583,16 @@ mod tests {
     #[test]
     fn achievement_partial_first_batch_sets_sum() {
         let (mut app, mut rx) = make_app();
-        assert_eq!(app.stats.achievements, None, "starts as None before any partial");
+        assert_eq!(
+            app.stats.achievements, None,
+            "starts as None before any partial"
+        );
 
         let mut batch = HashMap::new();
         batch.insert(730u32, Some(50u64));
         batch.insert(440u32, Some(100u64));
 
-        app.tx
-            .send(AppEvent::AchievementsPartial(batch))
-            .unwrap();
+        app.tx.send(AppEvent::AchievementsPartial(batch)).unwrap();
 
         process_events(&mut app, &mut rx);
 
@@ -482,9 +622,7 @@ mod tests {
         // First partial: game 730 gets 50 achievements.
         let mut first = HashMap::new();
         first.insert(730u32, Some(50u64));
-        app.tx
-            .send(AppEvent::AchievementsPartial(first))
-            .unwrap();
+        app.tx.send(AppEvent::AchievementsPartial(first)).unwrap();
         process_events(&mut app, &mut rx);
 
         assert_eq!(app.achievement_cache.get(&730), Some(&Some(50)));
@@ -493,9 +631,7 @@ mod tests {
         // Second partial: only game 440 — game 730's entry must be preserved.
         let mut second = HashMap::new();
         second.insert(440u32, Some(100u64));
-        app.tx
-            .send(AppEvent::AchievementsPartial(second))
-            .unwrap();
+        app.tx.send(AppEvent::AchievementsPartial(second)).unwrap();
         process_events(&mut app, &mut rx);
 
         assert_eq!(
@@ -524,10 +660,7 @@ mod tests {
             app.stats.achievements, None,
             "stats.achievements must be None before any AchievementsPartial event"
         );
-        assert!(
-            app.achievement_cache.is_empty(),
-            "cache must start empty"
-        );
+        assert!(app.achievement_cache.is_empty(), "cache must start empty");
     }
 
     // --- stats.achievements sums only Some(_) values, ignoring None entries ---
@@ -542,9 +675,7 @@ mod tests {
         // Send a partial with real data.
         let mut batch = HashMap::new();
         batch.insert(730u32, Some(42u64));
-        app.tx
-            .send(AppEvent::AchievementsPartial(batch))
-            .unwrap();
+        app.tx.send(AppEvent::AchievementsPartial(batch)).unwrap();
         process_events(&mut app, &mut rx);
 
         assert_eq!(

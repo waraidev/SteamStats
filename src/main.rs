@@ -35,7 +35,8 @@ async fn main() -> anyhow::Result<()> {
     // ── 3. Channel + App ──────────────────────────────────────────────────────
     let (tx, rx) = mpsc::unbounded_channel::<AppEvent>();
 
-    let app = App::with_tx(tx.clone());
+    let mut app = App::with_tx(tx.clone());
+    app.config = Some(config.clone());
 
     // ── 4. Background data fetch task ─────────────────────────────────────────
     // Spawned before run_tui() so the first render already has cached data
@@ -59,9 +60,9 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => {
                 // Recently played is non-fatal — report via channel so the TUI status bar
                 // can show it without writing to stderr (which would corrupt the TUI display).
-                let _ = tx_fetch.send(AppEvent::StatusMessage(
-                    format!("Recently played unavailable: {e}"),
-                ));
+                let _ = tx_fetch.send(AppEvent::StatusMessage(format!(
+                    "Recently played unavailable: {e}"
+                )));
                 vec![]
             }
         };
@@ -69,15 +70,17 @@ async fn main() -> anyhow::Result<()> {
         // Persist new snapshot (includes fresh playtime values).
         let snapshot = build_snapshot(&owned);
         if let Err(e) = store.append(&snapshot) {
-            let _ = tx_fetch.send(AppEvent::StatusMessage(
-                format!("Snapshot save failed: {e}"),
-            ));
+            let _ = tx_fetch.send(AppEvent::StatusMessage(format!(
+                "Snapshot save failed: {e}"
+            )));
         }
 
-        // Signal UI that base data is ready.
+        // Signal UI that base data is ready, including updated snapshots for period stats (VF-1).
+        let snapshots = store.load();
         let _ = tx_fetch.send(AppEvent::DataLoaded {
             owned: owned.clone(),
             recent,
+            snapshots,
         });
 
         // ── 5. Achievement fan-out task (AD-5) ────────────────────────────────
